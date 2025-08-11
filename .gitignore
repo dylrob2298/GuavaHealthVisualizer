@@ -1,3 +1,6 @@
+# Don't add health data to git
+*.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
