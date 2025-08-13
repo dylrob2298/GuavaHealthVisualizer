@@ -1,5 +1,8 @@
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 MOBILITY_AID_TYPES = {"Walker", "Manual Wheelchair", "Automatic Wheelchair"}
 
@@ -26,6 +29,7 @@ def prepare_energy_column(df: pd.DataFrame) -> pd.Series:
               .groupby("datetime")["value"].last()
               .rename("Energy")
             )
+    energy = pd.to_numeric(energy, errors="coerce")
     return energy
 
 
@@ -70,9 +74,22 @@ def transform_data(df: pd.DataFrame) -> pd.DataFrame:
     mobility_aid = prepare_mobility_aid_column(df)
 
     out_df = out_df.join(symptoms, how="left")
+    # Add total symptoms count column
+    out_df["Total Symptoms"] = out_df["Symptoms"].apply(lambda x: len(x) if isinstance(x, list) else 0)
+    out_df["Any Symptoms"] = out_df["Total Symptoms"] > 0
+
+
     out_df = out_df.join(energy, how="left")
     out_df = out_df.join(water, how="left")
     out_df = out_df.join(mobility_aid, how="left")
+
+    out_df["Any Mobility Aid Used"] = out_df["Mobility Aids"].apply(lambda x: True if isinstance(x, list) and len(x) > 0 else False)
+
+    dt = pd.to_datetime(out_df.index, errors="coerce")
+    out_df.insert(0, "Datetime", dt)  # keep for plotting on a time axis
+    out_df.insert(1, "Date", dt.date)
+    out_df["Day of Week"] = dt.day_name()
+    out_df["Month"] = dt.month_name()
 
     return out_df
 
