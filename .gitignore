@@ -1,5 +1,6 @@
 # Don't add health data to git
 *.csv
+export.xml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
