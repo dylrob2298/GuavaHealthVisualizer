@@ -6,6 +6,76 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.io as pio
 import ast
+import io, os, tempfile
+from typing import Optional
+
+# Use your existing pipeline from main.py
+from main import load_apple_health_daily, transform_data
+
+@st.cache_data(show_spinner="Processing uploaded files…")
+def process_upload(guava_bytes: bytes, xml_bytes: Optional[bytes]) -> pd.DataFrame:
+    """Return transformed dataframe from uploaded Guava CSV and Apple Health export.xml."""
+    # Read raw Guava CSV in-memory
+    df_raw = pd.read_csv(io.BytesIO(guava_bytes))
+
+    # Build Apple Health daily aggregates
+    if xml_bytes:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xml") as tmp:
+            tmp.write(xml_bytes)
+            tmp_path = tmp.name
+        try:
+            apple_daily = load_apple_health_daily(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+    else:
+        apple_daily = pd.DataFrame(columns=["Date"])
+
+    # Transform
+    transformed = transform_data(df_raw, apple_daily=apple_daily)
+    return transformed
+
+def normalize_transformed(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize dtypes and list/boolean fields to match expectations elsewhere in the app."""
+    df = df.copy()
+    if "Datetime" in df.columns:
+        df["Datetime"] = pd.to_datetime(df["Datetime"], errors="coerce")
+    df = df.sort_values("Datetime").dropna(subset=["Datetime"])
+    df["Date"] = df["Datetime"].dt.date
+
+    # Handle list-like columns that may already be lists or strings
+    def parse_list_cell(x):
+        if isinstance(x, list): return x
+        if pd.isna(x): return []
+        if isinstance(x, str):
+            s = x.strip()
+            if not s or s.lower() == "none": return []
+            try:
+                v = ast.literal_eval(s)
+                if isinstance(v, list): return [str(t) for t in v]
+            except Exception:
+                pass
+            return [t.strip() for t in s.split(",") if t.strip()]
+        return []
+
+    for col in ["Symptoms", "Mobility Aids"]:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_list_cell)
+
+    def to_bool(x):
+        if isinstance(x, (bool, np.bool_)): return bool(x)
+        if pd.isna(x): return False
+        return str(x).strip().lower() in {"true", "1", "yes", "y"}
+
+    for col in ["Any Mobility Aid Used", "Any Symptoms"]:
+        if col in df.columns:
+            df[col] = df[col].apply(to_bool)
+
+    if not df["Datetime"].is_unique:
+        df = df.drop_duplicates(subset=["Date"], keep="last")
+    return df.reset_index(drop=True)
 
 
 # ---------- Color & Plotting Template Configuration ----------
@@ -76,7 +146,11 @@ def load_data(path="transformed_guava.csv") -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-df = load_data()
+if "transformed_df" in st.session_state:
+    df = normalize_transformed(st.session_state["transformed_df"])
+else:
+    df = load_data()  # falls back to existing transformed_guava.csv on disk
+
 
 # Available columns
 metrics = [
@@ -96,6 +170,30 @@ metrics = [
 has = {c: (c in df.columns) for c in ["Symptoms", "Mobility Aids", "Any Symptoms"]}
 
 # ---------- Sidebar controls ----------
+with st.sidebar.expander("Upload new data", expanded=False):
+    guava_file = st.file_uploader("Guava CSV", type=["csv"], key="u_guava_csv")
+    xml_file = st.file_uploader("Apple Health export.xml", type=["xml"], key="u_export_xml")
+
+    if st.button("Process and use uploaded data", type="primary", use_container_width=True):
+        if not guava_file:
+            st.warning("Please upload a Guava CSV.")
+        else:
+            transformed = process_upload(
+                guava_file.getvalue(),
+                xml_file.getvalue() if xml_file is not None else None,
+            )
+            st.session_state["transformed_df"] = transformed
+            st.success(f"Processed {len(transformed)} rows. Dashboard updated.")
+
+            # Optional download of the processed dataset
+            st.download_button(
+                "Download processed CSV",
+                data=transformed.to_csv(index=False),
+                file_name="transformed_guava.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
 st.sidebar.header("Controls")
 date_min, date_max = df["Date"].min(), df["Date"].max()
 date_range = st.sidebar.slider(
