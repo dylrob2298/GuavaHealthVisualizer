@@ -74,13 +74,24 @@ d = df.loc[mask].copy()
 # Rolling columns
 for c in ["Steps","Exercise Minutes","Sleep Hours","Walking HR Avg","Energy"]:
     if c in d.columns:
-        d[f"{c} (7d)"] = d[c].rolling(window, min_periods=1).mean().round(2)
+        d[f"{c} ({window}d MA)"] = d[c].rolling(window, min_periods=1).mean().round(2)
 
 # ---------- Day picker + KPI cards ----------
 st.title("Your Health Data")
-sel_day = st.selectbox("Pick a day to inspect", options=list(d["Date"]), index=len(d)-1)
+# --- MODIFICATION START ---
+# Changed the selectbox to a date_input for easier navigation
+sel_day = st.date_input(
+    "Pick a day to inspect",
+    value=d["Date"].max() if not d.empty else date_range[1],
+    min_value=date_range[0],
+    max_value=date_range[1],
+    format="YYYY-MM-DD",
+)
 
-sel = d[d["Date"] == sel_day].iloc[0] if not d.empty else None
+# Find data for the selected day. It might not exist in the filtered dataframe.
+sel_df = d[d["Date"] == sel_day]
+sel = sel_df.iloc[0] if not sel_df.empty else None
+# --- MODIFICATION END ---
 
 def _fmt(x):
     if pd.isna(x): return "—"
@@ -128,10 +139,17 @@ def add_ma(df: pd.DataFrame, col: str, window: int) -> str | None:
 
 # Use your filtered daily data
 transformed = d.copy().sort_values("Datetime")
-w_ma = add_ma(transformed, "Water", win)
-e_ma = add_ma(transformed, "Energy", win)
 
-# ---- Tabs (weekly patterns removed) ----
+# Prepare a string version of Mobility Aids for clean hover display.
+if has["Mobility Aids"]:
+    transformed['Mobility Aids (str)'] = transformed['Mobility Aids'].apply(
+        lambda aids: ', '.join(map(str, aids)) if (aids and isinstance(aids, list)) else 'None'
+    )
+else:
+    # Create a placeholder column if the original doesn't exist for consistent hover info.
+    transformed['Mobility Aids (str)'] = 'Not Tracked'
+
+# ---- Tabs for single metrics ----
 st.divider()
 st.subheader("Metrics over time")
 
@@ -170,18 +188,44 @@ if num_cols:
         with tab:
             y = transformed[col]
             fig_ts = go.Figure()
+
+            hover_cols = ["Energy", "Total Symptoms", "Mobility Aids (str)"]
+            available_hover_cols = [c for c in hover_cols if c in transformed.columns and c != col]
+            
+            customdata = transformed[available_hover_cols]
+
+            hovertemplate = f"<b>%{{x|%Y-%m-%d}}</b><br>{col}: %{{y:.2f}}"
+            for i, hover_col_name in enumerate(available_hover_cols):
+                label = hover_col_name.replace(" (str)", "")
+                formatter = ""
+                if hover_col_name == "Energy": formatter = ":.1f"
+                elif hover_col_name == "Total Symptoms": formatter = ":.0f"
+                hovertemplate += f"<br>{label}: %{{customdata[{i}]{formatter}}}"
+            hovertemplate += "<extra></extra>"
+            
             fig_ts.add_trace(
                 go.Scatter(
                     x=transformed["Datetime"], y=y, name=col,
-                    mode="lines+markers", hovertemplate="<b>%{x|%Y-%m-%d}</b><br>"
-                                                        f"{col}: "+"%{y:.2f}<extra></extra>"
+                    mode="lines+markers",
+                    customdata=customdata,
+                    hovertemplate=hovertemplate
                 )
             )
+
             if show_roll:
-                ma = y.rolling(win, min_periods=1).mean()
-                fig_ts.add_trace(
-                    go.Scatter(x=transformed["Datetime"], y=ma, name=f"{col} ({win}d MA)", mode="lines")
-                )
+                ma_name = f"{col} ({win}d MA)"
+                ma_col = add_ma(transformed, col, win)
+                if ma_col:
+                    fig_ts.add_trace(
+                        go.Scatter(
+                            x=transformed["Datetime"],
+                            y=transformed[ma_col],
+                            name=ma_name,
+                            mode="lines",
+                            hovertemplate=f"{ma_name}: %{{y:.2f}}<extra></extra>"
+                        )
+                    )
+
             tgt = target_map.get(col)
             if tgt is not None and np.isfinite(tgt):
                 fig_ts.add_hline(y=tgt, line_dash="dot",
@@ -194,48 +238,100 @@ if num_cols:
                 xaxis_title="Date",
                 yaxis_title=y_title,
                 margin=dict(l=40, r=20, t=60, b=40),
-                legend=dict(orientation="h", y=1.02)
+                legend=dict(orientation="h", y=1.02, yanchor="bottom", xanchor="right", x=1)
             )
             st.plotly_chart(fig_ts, use_container_width=True)
 else:
     st.info("No numeric metrics found to plot.")
 
-# ----------------- Below: other graphs -----------------
+# --- MODIFICATION START ---
+# Moved the comparison chart out of the tabs into its own section
 st.divider()
-st.subheader("Comparisons and summaries")
+st.subheader("Compare Two Metrics")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Water vs Energy", "Symptoms per day", "Energy + Mobility", "Top symptoms",
-])
+options = num_cols
 
-with tab1:
-    if {"Water", "Energy"} <= set(transformed.columns):
-        fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
-        fig_dual.add_trace(go.Scatter(x=transformed["Datetime"], y=transformed["Water"],
-                                      mode="lines+markers", name="Water (mL)"),
-                           secondary_y=False)
-        fig_dual.add_trace(go.Scatter(x=transformed["Datetime"], y=transformed["Energy"],
-                                      mode="lines+markers", name="Energy"),
-                           secondary_y=True)
-        # Optional MAs
-        if "Water ({}d MA)".format(win) in transformed.columns:
-            fig_dual.add_trace(go.Scatter(x=transformed["Datetime"], y=transformed[f"Water ({win}d MA)"],
-                                          mode="lines", name=f"Water ({win}d MA)"),
-                               secondary_y=False)
-        if "Energy ({}d MA)".format(win) in transformed.columns:
-            fig_dual.add_trace(go.Scatter(x=transformed["Datetime"], y=transformed[f"Energy ({win}d MA)"],
-                                          mode="lines", name=f"Energy ({win}d MA)"),
-                               secondary_y=True)
-        fig_dual.update_layout(title_text="Water vs Energy Over Time", hovermode="x unified",
-                               margin=dict(l=40, r=20, t=60, b=40), legend=dict(orientation="h", y=1.02))
-        fig_dual.update_xaxes(title_text="Date")
-        fig_dual.update_yaxes(title_text="Water (mL)", secondary_y=False)
-        fig_dual.update_yaxes(title_text="Energy", secondary_y=True)
-        st.plotly_chart(fig_dual, use_container_width=True)
-    else:
-        st.info("Need both Water and Energy columns.")
+if len(options) < 2:
+    st.info("You need at least two numeric metric columns in your data to use this comparison chart.")
+else:
+    c1, c2 = st.columns(2)
+    default_ix1 = options.index("Water") if "Water" in options else 0
+    default_ix2 = options.index("Energy") if "Energy" in options and "Energy" != options[default_ix1] else 1
 
-with tab2:
+    metric1 = c1.selectbox("Select metric for Left Y-Axis", options, index=default_ix1, key="metric1_selector")
+    metric2 = c2.selectbox("Select metric for Right Y-Axis", options, index=default_ix2, key="metric2_selector")
+    
+    fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # --- Prepare hover data ---
+    # hover_base_cols = ["Energy", "Total Symptoms", "Mobility Aids (str)"]
+    # We will build the hover text from metric1, so we need metric2 and the others
+    # custom_data_cols = [metric2] + [c for c in hover_base_cols if c not in [metric1, metric2]]
+    # available_custom_cols = [c for c in custom_data_cols if c in transformed.columns]
+    # customdata = transformed[available_custom_cols]
+
+    # --- Build rich hovertemplate ---
+    hovertemplate = f"<b>%{{x|%Y-%m-%d}}</b><br>{metric1}: %{{y:.2f}}"
+    # for i, col_name in enumerate(available_custom_cols):
+    #     label = col_name.replace(" (str)", "")
+    #     formatter = ""
+    #     if col_name == "Energy": formatter = ":.1f"
+    #     elif col_name == "Total Symptoms": formatter = ":.0f"
+    #     else: formatter = ":.2f" # For the other selected metric
+    #     hovertemplate += f"<br>{label}: %{{customdata[{i}]{formatter}}}"
+    hovertemplate += "<extra></extra>"
+    
+    unit1 = f" ({unit_map.get(metric1, '')})" if unit_map.get(metric1) else ""
+    unit2 = f" ({unit_map.get(metric2, '')})" if unit_map.get(metric2) else ""
+
+    # --- Add traces ---
+    fig_dual.add_trace(go.Scatter(
+        x=transformed["Datetime"], y=transformed[metric1],
+        mode="lines+markers", name=metric1,
+        customdata=customdata, hovertemplate=hovertemplate
+    ), secondary_y=False)
+
+    if show_roll:
+        ma1_name = add_ma(transformed, metric1, win)
+        if ma1_name:
+            fig_dual.add_trace(go.Scatter(
+                x=transformed["Datetime"], y=transformed[ma1_name],
+                mode="lines", name=ma1_name,
+                hovertemplate=f"{ma1_name}: %{{y:.2f}}<extra></extra>"
+            ), secondary_y=False)
+    
+    fig_dual.add_trace(go.Scatter(
+        x=transformed["Datetime"], y=transformed[metric2],
+        mode="lines+markers", name=metric2,
+        hovertemplate=f"{metric2}: %{{y:.2f}}<extra></extra>" # Minimal hover
+    ), secondary_y=True)
+
+    if show_roll:
+        ma2_name = add_ma(transformed, metric2, win)
+        if ma2_name:
+            fig_dual.add_trace(go.Scatter(
+                x=transformed["Datetime"], y=transformed[ma2_name],
+                mode="lines", name=ma2_name,
+                hovertemplate=f"{ma2_name}: %{{y:.2f}}<extra></extra>"
+            ), secondary_y=True)
+
+    fig_dual.update_layout(
+        title_text=f"{metric1} vs. {metric2} Over Time",
+        hovermode="x unified",
+        margin=dict(l=40, r=20, t=60, b=40),
+        legend=dict(orientation="h", y=1.02, yanchor="bottom", xanchor="right", x=1)
+    )
+    fig_dual.update_xaxes(title_text="Date")
+    fig_dual.update_yaxes(title_text=f"{metric1}{unit1}", secondary_y=False)
+    fig_dual.update_yaxes(title_text=f"{metric2}{unit2}", secondary_y=True)
+
+    st.plotly_chart(fig_dual, use_container_width=True)
+
+# ----------------- Other Summary Graphs -----------------
+st.divider()
+st.subheader("Other Summaries")
+
+with st.expander("Symptoms Per Day", expanded=True):
     if "Total Symptoms" in transformed.columns:
         tmp = transformed.copy()
         color_col = "Any Mobility Aid Used" if "Any Mobility Aid Used" in tmp.columns else None
@@ -259,7 +355,7 @@ with tab2:
     else:
         st.info("No symptoms count available.")
 
-with tab3:
+with st.expander("Energy & Mobility Scatter Plot"):
     color_col = "Any Mobility Aid Used" if "Any Mobility Aid Used" in transformed.columns else None
     hover_cols = [c for c in ["Water","Total Symptoms","Mobility Aids"] if c in transformed.columns]
     if "Energy" in transformed.columns:
@@ -274,7 +370,7 @@ with tab3:
     else:
         st.info("Energy not available.")
 
-with tab4:
+with st.expander("Top Symptoms Breakdown"):
     if "Symptoms" in transformed.columns:
         top_n = st.number_input("Top N symptoms", 5, 50, 20, 1)
         sym_long = transformed.explode("Symptoms")
@@ -288,7 +384,7 @@ with tab4:
             fig_sym_freq = px.bar(
                 sym_counts.head(int(top_n)), x="size", y="Symptoms", orientation="h",
                 title=f"Top {int(top_n)} Recorded Symptoms",
-                labels={"size": "Days observed", "Symptoms": "Symptom"}
+                labels={"size": "Days observed", "Symptom": "Symptom"}
             )
             fig_sym_freq.update_layout(yaxis={"categoryorder": "total ascending"},
                                        margin=dict(l=40, r=20, t=60, b=40))
@@ -297,5 +393,3 @@ with tab4:
             st.info("No symptom records in the selected range.")
     else:
         st.info("Symptoms column not available.")
-
-
