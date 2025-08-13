@@ -7,5 +7,6 @@ requires-python = ">=3.10"
 dependencies = [
     "lxml>=6.0.0",
     "plotly>=6.2.0",
+    "scipy>=1.15.3",
     "streamlit>=1.48.0",
 ]
