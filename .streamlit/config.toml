@@ -1,2 +1,23 @@
 [server]
-maxUploadSize = 1000
+maxUploadSize = 2000
+
+[theme]
+base = "dark"
+primaryColor = "#88C0D0"
+backgroundColor = "#2E3440"
+secondaryBackgroundColor = "#3B4252"
+textColor = "#E5E9F0"
+
+chartCategoricalColors = [
+  "#4477AA",  # Dull Blue
+  "#EE6677",  # Red
+  "#228833",  # Green
+  "#CCBB44",  # Yellow
+  "#66CCEE",  # Cyan
+  "#AA3377",  # Purple
+  "#BBBBBB"   # Light Grey
+]
+
+
+[theme.sidebar]
+backgroundColor="#3B4252"

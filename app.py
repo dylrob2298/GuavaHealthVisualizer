@@ -78,22 +78,6 @@ def normalize_transformed(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-# ---------- Color & Plotting Template Configuration ----------
-# Set a global, colorblind-friendly template for consistent and accessible charts.
-# The 'Safe' palette is designed to be distinct for people with common color vision deficiencies.
-pio.templates["custom_template"] = pio.templates["plotly_white"]
-pio.templates["custom_template"].layout.colorway = px.colors.qualitative.Safe
-pio.templates.default = "custom_template"
-
-# Define specific colors for manual graph_objects for better clarity and aesthetics
-# Using colors from the colorblind-safe Okabe-Ito palette
-C1_BLUE = "#0072B2"
-C1_SKYBLUE = "#56B4E9"
-C2_ORANGE = "#D55E00"
-C2_OCHRE = "#E69F00"
-NEUTRAL_GREY = "#BCC2CF"
-
-
 st.set_page_config(page_title="Health Dashboard", layout="wide")
 
 
@@ -175,8 +159,8 @@ with st.sidebar.expander("Upload new data", expanded=False):
     xml_file = st.file_uploader("Apple Health export.xml", type=["xml"], key="u_export_xml")
 
     if st.button("Process and use uploaded data", type="primary", use_container_width=True):
-        if not guava_file:
-            st.warning("Please upload a Guava CSV.")
+        if not guava_file or not xml_file:
+            st.warning("Please upload BOTH a Guava CSV and an Apple Health Export XML.")
         else:
             transformed = process_upload(
                 guava_file.getvalue(),
@@ -356,8 +340,7 @@ if num_cols:
                     y=y,
                     name=col,
                     mode="lines+markers",
-                    line=dict(color=C1_BLUE),
-                    marker=dict(color=C1_BLUE, size=5),
+                    marker=dict(size=5),
                     customdata=customdata,
                     hovertemplate=hovertemplate,
                 )
@@ -373,7 +356,7 @@ if num_cols:
                             y=transformed[ma_col],
                             name=ma_name,
                             mode="lines",
-                            line=dict(color=C1_SKYBLUE, dash="dash"),
+                            line=dict(dash="dash"),
                             hovertemplate=f"{ma_name}: %{{y:.2f}}<extra></extra>",
                         )
                     )
@@ -444,7 +427,6 @@ else:
             y=transformed[metric1],
             mode="lines",
             name=metric1,
-            line=dict(color=C1_BLUE),
             hovertemplate=f"{metric1}: %{{y:.2f}}<extra></extra>",
         ),
         secondary_y=False,
@@ -459,7 +441,7 @@ else:
                     y=transformed[ma1_name],
                     mode="lines",
                     name=ma1_name,
-                    line=dict(color=C1_SKYBLUE, dash="dash"),
+                    line=dict(dash="dash"),
                     hovertemplate=f"{ma1_name}: %{{y:.2f}}<extra></extra>",
                 ),
                 secondary_y=False,
@@ -471,7 +453,6 @@ else:
             y=transformed[metric2],
             mode="lines",
             name=metric2,
-            line=dict(color=C2_ORANGE),
             hovertemplate=f"{metric2}: %{{y:.2f}}<extra></extra>",
         ),
         secondary_y=True,
@@ -486,7 +467,7 @@ else:
                     y=transformed[ma2_name],
                     mode="lines",
                     name=ma2_name,
-                    line=dict(color=C2_OCHRE, dash="dash"),
+                    line=dict(dash="dash"),
                     hovertemplate=f"{ma2_name}: %{{y:.2f}}<extra></extra>",
                 ),
                 secondary_y=True,
@@ -580,7 +561,6 @@ else:
             if "Any Mobility Aid Used" in plot_df.columns
             else None
         )
-        color_map = {True: C2_ORANGE, False: NEUTRAL_GREY}
 
         # Add a string representation of Symptoms for hover data
         plot_df["Symptoms (str)"] = plot_df["Symptoms"].apply(
@@ -603,7 +583,6 @@ else:
             x="Datetime",
             y=y_axis_metric,
             color=color_col,
-            color_discrete_map=color_map if color_col else None,
             hover_data=hover_data,
             title=f"{y_axis_metric} Over Time (Filtered)",
         )
@@ -623,104 +602,71 @@ else:
 
 # ----------------- Other Summary Graphs -----------------
 st.divider()
-st.subheader("Other Summaries")
+st.subheader("Symptoms Per Day")
 
-with st.expander("Symptoms Per Day", expanded=True):
-    if "Total Symptoms" in transformed.columns:
-        tmp = transformed.copy()
-        color_col = (
-            "Any Mobility Aid Used" if "Any Mobility Aid Used" in tmp.columns else None
-        )
-        if "Mobility Aids" in tmp.columns:
-            tmp["Mobility Aids (list)"] = tmp["Mobility Aids"].apply(
-                lambda v: ", ".join(map(str, v)) if v else "None"
-            )
-
-        color_map = {True: C2_ORANGE, False: NEUTRAL_GREY}
-
-        fig_sym_ct = px.bar(
-            tmp,
-            x="Datetime",
-            y="Total Symptoms",
-            color=color_col,
-            color_discrete_map=color_map if color_col else None,
-            custom_data=(
-                ["Mobility Aids (list)"]
-                if "Mobility Aids (list)" in tmp.columns
-                else None
-            ),
-            title="Total Symptoms per Day"
-            + (" (colored by mobility aid usage)" if color_col else ""),
-        )
-        if "Mobility Aids (list)" in tmp.columns:
-            fig_sym_ct.update_traces(
-                hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Total Symptoms: %{y}<br>Mobility Aids: %{customdata[0]}<extra></extra>"
-            )
-        fig_sym_ct.update_layout(
-            hovermode="x unified", margin=dict(l=40, r=20, t=60, b=40)
-        )
-        st.plotly_chart(fig_sym_ct, use_container_width=True)
-    else:
-        st.info("No symptoms count available.")
-
-with st.expander("Energy & Mobility Scatter Plot"):
+if "Total Symptoms" in transformed.columns:
+    tmp = transformed.copy()
     color_col = (
-        "Any Mobility Aid Used"
-        if "Any Mobility Aid Used" in transformed.columns
-        else None
+        "Any Mobility Aid Used" if "Any Mobility Aid Used" in tmp.columns else None
     )
-    hover_cols = [
-        c
-        for c in ["Water", "Total Symptoms", "Mobility Aids"]
-        if c in transformed.columns
-    ]
-    if "Energy" in transformed.columns:
-        color_map = {True: C2_ORANGE, False: NEUTRAL_GREY}
+    if "Mobility Aids" in tmp.columns:
+        tmp["Mobility Aids (list)"] = tmp["Mobility Aids"].apply(
+            lambda v: ", ".join(map(str, v)) if v else "None"
+        )
 
-        fig_mob = px.scatter(
-            transformed,
-            x="Datetime",
-            y="Energy",
-            color=color_col,
-            color_discrete_map=color_map if color_col else None,
-            hover_data=hover_cols,
-            title="Energy Over Time"
-            + (" (colored by mobility aid usage)" if color_col else ""),
+
+    fig_sym_ct = px.bar(
+        tmp,
+        x="Datetime",
+        y="Total Symptoms",
+        color=color_col,
+        custom_data=(
+            ["Mobility Aids (list)"]
+            if "Mobility Aids (list)" in tmp.columns
+            else None
+        ),
+        title="Total Symptoms per Day"
+        + (" (colored by mobility aid usage)" if color_col else ""),
+    )
+    if "Mobility Aids (list)" in tmp.columns:
+        fig_sym_ct.update_traces(
+            hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Total Symptoms: %{y}<br>Mobility Aids: %{customdata[0]}<extra></extra>"
         )
-        fig_mob.update_traces(mode="markers")
-        fig_mob.update_layout(
-            hovermode="x unified", margin=dict(l=40, r=20, t=60, b=40)
+    fig_sym_ct.update_layout(
+        hovermode="x unified", margin=dict(l=40, r=20, t=60, b=40)
+    )
+    st.plotly_chart(fig_sym_ct, use_container_width=True)
+else:
+    st.info("No symptoms count available.")
+
+st.divider()
+st.subheader("Top Symptoms Breakdown")
+
+if "Symptoms" in transformed.columns:
+    top_n = st.number_input("Top N symptoms", 5, 50, 20, 1)
+    sym_long = transformed.explode("Symptoms")
+    sym_counts = (
+        sym_long.dropna(subset=["Symptoms"])
+        .groupby("Symptoms", as_index=False)
+        .size()
+        .sort_values("size", ascending=False)
+    )
+
+    if not sym_counts.empty:
+        fig_sym_freq = px.bar(
+            sym_counts.head(int(top_n)),
+            x="size",
+            y="Symptoms",
+            orientation="h",
+            title=f"Top {int(top_n)} Recorded Symptoms",
+            labels={"size": "Days observed", "Symptom": "Symptom"},
         )
-        st.plotly_chart(fig_mob, use_container_width=True)
+        fig_sym_freq.update_layout(
+            yaxis={"categoryorder": "total ascending"},
+            margin=dict(l=40, r=20, t=60, b=40),
+        )
+        st.plotly_chart(fig_sym_freq, use_container_width=True)
     else:
-        st.info("Energy not available.")
-
-with st.expander("Top Symptoms Breakdown"):
-    if "Symptoms" in transformed.columns:
-        top_n = st.number_input("Top N symptoms", 5, 50, 20, 1)
-        sym_long = transformed.explode("Symptoms")
-        sym_counts = (
-            sym_long.dropna(subset=["Symptoms"])
-            .groupby("Symptoms", as_index=False)
-            .size()
-            .sort_values("size", ascending=False)
-        )
-
-        if not sym_counts.empty:
-            fig_sym_freq = px.bar(
-                sym_counts.head(int(top_n)),
-                x="size",
-                y="Symptoms",
-                orientation="h",
-                title=f"Top {int(top_n)} Recorded Symptoms",
-                labels={"size": "Days observed", "Symptom": "Symptom"},
-            )
-            fig_sym_freq.update_layout(
-                yaxis={"categoryorder": "total ascending"},
-                margin=dict(l=40, r=20, t=60, b=40),
-            )
-            st.plotly_chart(fig_sym_freq, use_container_width=True)
-        else:
-            st.info("No symptom records in the selected range.")
-    else:
-        st.info("Symptoms column not available.")
+        st.info("No symptom records in the selected range.")
+else:
+    st.info("Symptoms column not available.")
