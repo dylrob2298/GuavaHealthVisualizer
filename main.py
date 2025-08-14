@@ -342,6 +342,10 @@ def transform_data(
 
     out_df = out_df.dropna(subset=["Datetime", "Date"])
 
+    out_df["Date"] = pd.to_datetime(out_df["Date"]).dt.strftime("%d-%m-%Y")
+    out_df["Datetime"] = pd.to_datetime(out_df["Datetime"]).dt.strftime("%d-%m-%Y")
+    
+
     return out_df
 
 
