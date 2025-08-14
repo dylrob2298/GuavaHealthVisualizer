@@ -1,8 +1,6 @@
 name: build-windows-exe
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]  # optional
 
 jobs:
   win:
@@ -15,24 +13,28 @@ jobs:
           python-version: "3.11"
 
       - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install -U pip wheel
           python -m pip install streamlit pandas numpy plotly python-dateutil "lxml==5.*" pyinstaller
 
-      - name: Build launcher
+      - name: Create launcher.py
+        shell: pwsh
         run: |
-          echo ^# launcher.py> launcher.py
-          echo import os>> launcher.py
-          echo from streamlit.web import bootstrap>> launcher.py
-          echo APP = os.path.join(os.path.dirname(__file__), "app.py")>> launcher.py
-          echo bootstrap.run(APP, "", [], {})>> launcher.py
+          @'
+          import os
+          from streamlit.web import bootstrap
+          APP = os.path.join(os.path.dirname(__file__), "app.py")
+          bootstrap.run(APP, "", [], {})
+          '@ | Set-Content -Encoding UTF8 launcher.py
 
-      - name: PyInstaller onedir
-        run: |
-          pyinstaller --noconfirm --onedir --name HealthDashboard ^
-            --collect-all lxml --collect-all numpy --collect-all pandas ^
-            --add-data "app.py;." --add-data "main.py;." ^
-            launcher.py
+      - name: Build (onedir)
+        shell: pwsh
+        run: >
+          pyinstaller --noconfirm --onedir --name HealthDashboard
+          --collect-all lxml --collect-all numpy --collect-all pandas
+          --add-data "app.py;." --add-data "main.py;."
+          launcher.py
 
       - uses: actions/upload-artifact@v4
         with:
